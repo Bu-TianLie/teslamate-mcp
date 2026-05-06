@@ -58,6 +58,15 @@ LOCAL_TIMEZONE=Asia/Shanghai
 docker compose up -d --build
 ```
 
+Dockerfile 默认使用 Docker Hub 官方 `python:3.11-slim-bookworm`，并通过阿里云 PyPI 镜像安装 `uv`，避免拉取较慢的 `ghcr.io/astral-sh/uv`。如果你想换 PyPI 镜像，可以在构建时传参：
+
+```bash
+docker compose build --build-arg PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
+docker compose up -d
+```
+
+如果 Docker Hub 官方 Python 镜像也慢，建议在服务器 Docker daemon 配置阿里云 ACR 镜像加速器，或把 `python:3.11-slim-bookworm` 同步到你自己的阿里云 ACR 私有仓库后再改 `FROM`。
+
 5. 查看日志：
 
 ```bash
