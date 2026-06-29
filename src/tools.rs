@@ -11,6 +11,11 @@ use serde_json::json;
 use crate::db::Database;
 use crate::models::*;
 
+/// Format a UTC DateTime as ISO 8601 with 'Z' suffix
+fn utc_to_z(dt: &chrono::DateTime<chrono::Utc>) -> String {
+    dt.to_rfc3339().replace("+00:00", "Z")
+}
+
 #[derive(Debug, Clone)]
 pub struct TeslaMateServer {
     db: Arc<Database>,
@@ -42,7 +47,7 @@ impl TeslaMateServer {
             Ok(charges) => {
                 let response = ListChargesResponse {
                     count: charges.len(),
-                    limit: limit.unwrap_or(10),
+                    limit: self.db.normalize_limit(limit, crate::db::DEFAULT_LIMIT),
                     only_missing_cost,
                     timezone: self.db.local_timezone.to_string(),
                     charges,
@@ -169,13 +174,13 @@ impl TeslaMateServer {
             Ok((start_boundary, end_boundary, charges)) => {
                 let response = SearchChargesResponse {
                     count: charges.len(),
-                    limit: limit.unwrap_or(50),
+                    limit: self.db.normalize_limit(limit, 50),
                     only_missing_cost,
                     timezone: self.db.local_timezone.to_string(),
                     start_date,
                     end_date,
-                    start_boundary_utc: start_boundary.to_rfc3339(),
-                    end_boundary_utc_exclusive: end_boundary.to_rfc3339(),
+                    start_boundary_utc: utc_to_z(&start_boundary),
+                    end_boundary_utc_exclusive: utc_to_z(&end_boundary),
                     charges,
                 };
                 serde_json::to_string(&response).unwrap_or_else(|e| {
@@ -219,8 +224,8 @@ impl TeslaMateServer {
                     timezone: self.db.local_timezone.to_string(),
                     start_date,
                     end_date,
-                    start_boundary_utc: start_boundary.to_rfc3339(),
-                    end_boundary_utc_exclusive: end_boundary.to_rfc3339(),
+                    start_boundary_utc: utc_to_z(&start_boundary),
+                    end_boundary_utc_exclusive: utc_to_z(&end_boundary),
                     total_sessions,
                     sessions_with_cost,
                     missing_cost_sessions: missing_sessions,
@@ -265,15 +270,9 @@ pub async fn serve_stdio(db: Arc<Database>) -> Result<(), anyhow::Error> {
 
 pub async fn serve_sse(db: Arc<Database>, host: &str, port: u16) -> Result<(), anyhow::Error> {
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
+    tracing::info!("SSE transport listening on {addr}");
     let sse_server = rmcp::transport::SseServer::serve(addr).await?;
     let ct = sse_server.with_service(move || TeslaMateServer::new(db.clone()));
     ct.cancelled().await;
     Ok(())
-}
-
-pub async fn serve_http(db: Arc<Database>, host: &str, port: u16) -> Result<(), anyhow::Error> {
-    // For now, use SSE transport as the HTTP transport
-    // rmcp doesn't have a built-in streamable-http server yet
-    tracing::info!("Using SSE transport at http://{host}:{port}/sse");
-    serve_sse(db, host, port).await
 }

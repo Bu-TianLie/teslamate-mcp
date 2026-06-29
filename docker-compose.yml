@@ -8,16 +8,23 @@ services:
     env_file:
       - .env
     environment:
-      MCP_TRANSPORT: ${MCP_TRANSPORT:-streamable-http}
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
       MCP_HOST: 0.0.0.0
       MCP_PORT: ${MCP_PORT:-8000}
       LOCAL_TIMEZONE: ${LOCAL_TIMEZONE:-Asia/Shanghai}
+      DATABASE_POOL_MIN_SIZE: ${DATABASE_POOL_MIN_SIZE:-1}
+      DATABASE_POOL_MAX_SIZE: ${DATABASE_POOL_MAX_SIZE:-4}
+      DATABASE_COMMAND_TIMEOUT: ${DATABASE_COMMAND_TIMEOUT:-10}
     ports:
       - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
     networks:
       - teslamate
     healthcheck:
-      test: ["CMD", "teslamate-mcp", "--healthcheck"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://127.0.0.1:${MCP_PORT:-8000}/sse || exit 1",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -1,13 +1,18 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormattedDatetime {
+    pub utc: Option<String>,
+    pub local: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChargeRecord {
     pub id: i32,
     pub car_id: i32,
     pub car_name: Option<String>,
-    pub start_date: Option<DateTime<Utc>>,
-    pub end_date: Option<DateTime<Utc>>,
+    pub start_date: FormattedDatetime,
+    pub end_date: FormattedDatetime,
     pub duration_min: Option<f64>,
     pub location: String,
     pub geofence_id: Option<i32>,

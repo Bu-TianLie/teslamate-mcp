@@ -12,11 +12,11 @@ use db::Database;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
-
-    dotenvy::dotenv().ok();
 
     let database_url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
@@ -32,27 +32,20 @@ async fn main() -> Result<()> {
     let db = Arc::new(Database::new(&database_url, local_timezone).await?);
 
     let transport = std::env::var("MCP_TRANSPORT")
-        .unwrap_or_else(|_| "streamable-http".to_string())
+        .unwrap_or_else(|_| "sse".to_string())
         .to_lowercase();
 
     tracing::info!("Starting TeslaMate MCP server with transport: {transport}");
 
     match transport.as_str() {
         "stdio" => tools::serve_stdio(db).await?,
-        "streamable-http" => {
+        "streamable-http" | "sse" => {
             let host = std::env::var("MCP_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
             let port: u16 = std::env::var("MCP_PORT")
                 .unwrap_or_else(|_| "8000".to_string())
                 .parse()
                 .map_err(|_| anyhow::anyhow!("MCP_PORT must be a valid port number"))?;
-            tools::serve_http(db, &host, port).await?
-        }
-        "sse" => {
-            let host = std::env::var("MCP_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-            let port: u16 = std::env::var("MCP_PORT")
-                .unwrap_or_else(|_| "8000".to_string())
-                .parse()
-                .map_err(|_| anyhow::anyhow!("MCP_PORT must be a valid port number"))?;
+            // rmcp 目前没有内置 streamable-http server，统一使用 SSE 传输
             tools::serve_sse(db, &host, port).await?
         }
         _ => {

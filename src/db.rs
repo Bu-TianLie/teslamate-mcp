@@ -1,14 +1,14 @@
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
 use crate::error::AppError;
-use crate::models::ChargeRecord;
+use crate::models::{ChargeRecord, FormattedDatetime};
 
 const MAX_LIMIT: i32 = 100;
-const DEFAULT_LIMIT: i32 = 10;
+pub const DEFAULT_LIMIT: i32 = 10;
 
 #[derive(Debug)]
 pub struct Database {
@@ -18,10 +18,23 @@ pub struct Database {
 
 impl Database {
     pub async fn new(database_url: &str, local_timezone: Tz) -> Result<Self, AppError> {
+        let min_size = std::env::var("DATABASE_POOL_MIN_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let max_size = std::env::var("DATABASE_POOL_MAX_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+        let command_timeout: f64 = std::env::var("DATABASE_COMMAND_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10.0);
+
         let pool = PgPoolOptions::new()
-            .min_connections(1)
-            .max_connections(5)
-            .acquire_timeout(std::time::Duration::from_secs(10))
+            .min_connections(min_size)
+            .max_connections(max_size)
+            .acquire_timeout(std::time::Duration::from_secs_f64(command_timeout))
             .connect(database_url)
             .await?;
 
@@ -86,12 +99,15 @@ impl Database {
         }
 
         // Try parsing as ISO datetime
-        let normalized = raw.replace('Z', "+00:00");
+        let normalized = if raw.ends_with('Z') || raw.ends_with('z') {
+            format!("{}+00:00", &raw[..raw.len() - 1])
+        } else {
+            raw.to_string()
+        };
         let dt = DateTime::parse_from_rfc3339(&normalized)
             .or_else(|_| {
-                // Try without timezone
-                let ndt = NaiveDate::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
-                    .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap())
+                // Try without timezone — use NaiveDateTime, not NaiveDate
+                let ndt = NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
                     .map_err(|_| chrono::format::ParseErrorKind::Impossible)?;
                 self.local_timezone
                     .from_local_datetime(&ndt)
@@ -106,6 +122,23 @@ impl Database {
             })?;
 
         Ok(dt.with_timezone(&Utc))
+    }
+
+    fn format_datetime(&self, value: Option<DateTime<Utc>>) -> FormattedDatetime {
+        match value {
+            Some(dt) => {
+                let utc = dt.to_rfc3339().replace("+00:00", "Z");
+                let local = dt.with_timezone(&self.local_timezone).to_rfc3339();
+                FormattedDatetime {
+                    utc: Some(utc),
+                    local: Some(local),
+                }
+            }
+            None => FormattedDatetime {
+                utc: None,
+                local: None,
+            },
+        }
     }
 
     fn row_to_charge_record(&self, row: &sqlx::postgres::PgRow) -> ChargeRecord {
@@ -129,8 +162,8 @@ impl Database {
             id: row.get("id"),
             car_id: row.get("car_id"),
             car_name: row.get("car_name"),
-            start_date: row.get("start_date"),
-            end_date: row.get("end_date"),
+            start_date: self.format_datetime(row.get("start_date")),
+            end_date: self.format_datetime(row.get("end_date")),
             duration_min: row.get("duration_min"),
             location,
             geofence_id: row.get("geofence_id"),
