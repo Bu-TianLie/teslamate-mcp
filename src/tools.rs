@@ -305,10 +305,14 @@ pub async fn serve_stdio(db: Arc<Database>) -> Result<(), anyhow::Error> {
 pub async fn serve_http(db: Arc<Database>, host: &str, port: u16) -> Result<(), anyhow::Error> {
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
 
+    let config = StreamableHttpServerConfig::default()
+        .with_stateful_mode(false)
+        .with_json_response(true);
+
     let service = StreamableHttpService::new(
         move || Ok(TeslaMateServer::new(db.clone())),
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
+        config,
     );
 
     let router = axum::Router::new().nest_service("/mcp", service);
