@@ -2,12 +2,12 @@
 
 一个 MCP 服务，用来查询 TeslaMate 最近充电记录，并直接写入 `charging_processes.cost`。
 
-使用 Rust 实现，基于 [rmcp](https://crates.io/crates/rmcp) SDK。
+使用 Rust 实现，基于 [rmcp](https://crates.io/crates/rmcp) SDK（v2.0）。
 
-默认使用 `sse`，适合小米手机 MiClaw 这类通过网络 URL 调用 MCP Server 的客户端：
+默认使用 `streamable-http`，适合小米手机 MiClaw 这类通过网络 URL 调用 MCP Server 的客户端：
 
 ```text
-http://<TeslaMate 所在机器的局域网 IP>:8000/sse
+http://<TeslaMate 所在机器的局域网 IP>:8000/mcp
 ```
 
 也可以通过 `MCP_TRANSPORT=stdio` 切回 Claude Desktop / Claude Code 常见的 stdio 模式。
@@ -41,7 +41,7 @@ docker network ls | grep teslamate
 ```dotenv
 DATABASE_URL=postgresql://teslamate:你的数据库密码@database:5432/teslamate
 TESLAMATE_DOCKER_NETWORK=teslamate_default
-MCP_TRANSPORT=sse
+MCP_TRANSPORT=streamable-http
 MCP_HOST=0.0.0.0
 MCP_PORT=8000
 LOCAL_TIMEZONE=Asia/Shanghai
@@ -64,13 +64,13 @@ docker compose logs -f teslamate-mcp
 然后在小米 MiClaw 里配置 MCP Server URL：
 
 ```text
-http://<TeslaMate 所在机器的局域网 IP>:8000/sse
+http://<TeslaMate 所在机器的局域网 IP>:8000/mcp
 ```
 
 例如 TeslaMate 主机局域网 IP 是 `192.168.31.20`：
 
 ```text
-http://192.168.31.20:8000/sse
+http://192.168.31.20:8000/mcp
 ```
 
 手机和 TeslaMate 主机需要在同一个局域网，或者手机需要能通过 VPN / 内网穿透访问这个地址。
@@ -88,7 +88,7 @@ cp .env.example .env
 cargo run
 ```
 
-默认会启动 SSE MCP。stdio 模式可以这样运行：
+默认会启动 Streamable HTTP MCP。stdio 模式可以这样运行：
 
 ```bash
 MCP_TRANSPORT=stdio cargo run

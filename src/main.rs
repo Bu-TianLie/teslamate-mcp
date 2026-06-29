@@ -32,24 +32,23 @@ async fn main() -> Result<()> {
     let db = Arc::new(Database::new(&database_url, local_timezone).await?);
 
     let transport = std::env::var("MCP_TRANSPORT")
-        .unwrap_or_else(|_| "sse".to_string())
+        .unwrap_or_else(|_| "streamable-http".to_string())
         .to_lowercase();
 
     tracing::info!("Starting TeslaMate MCP server with transport: {transport}");
 
     match transport.as_str() {
         "stdio" => tools::serve_stdio(db).await?,
-        "streamable-http" | "sse" => {
+        "streamable-http" | "http" => {
             let host = std::env::var("MCP_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
             let port: u16 = std::env::var("MCP_PORT")
                 .unwrap_or_else(|_| "8000".to_string())
                 .parse()
                 .map_err(|_| anyhow::anyhow!("MCP_PORT must be a valid port number"))?;
-            // rmcp 目前没有内置 streamable-http server，统一使用 SSE 传输
-            tools::serve_sse(db, &host, port).await?
+            tools::serve_http(db, &host, port).await?
         }
         _ => {
-            anyhow::bail!("MCP_TRANSPORT must be one of: stdio, streamable-http, sse");
+            anyhow::bail!("MCP_TRANSPORT must be one of: stdio, streamable-http");
         }
     }
 

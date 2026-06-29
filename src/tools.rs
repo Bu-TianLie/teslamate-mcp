@@ -2,10 +2,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use rmcp::{
-    ServerHandler,
-    model::{ServerCapabilities, ServerInfo},
-    tool,
+    ServerHandler, ServiceExt,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    schemars,
+    tool, tool_handler, tool_router,
+    transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    },
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::db::Database;
@@ -16,18 +22,83 @@ fn utc_to_z(dt: &chrono::DateTime<chrono::Utc>) -> String {
     dt.to_rfc3339().replace("+00:00", "Z")
 }
 
+// ─── Tool parameter schemas ───
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListRecentChargesParams {
+    /// 返回记录数量，默认10，最大100
+    #[schemars(description = "返回记录数量，默认10，最大100")]
+    pub limit: Option<i32>,
+    /// 是否只返回未填写费用的记录
+    #[schemars(description = "是否只返回未填写费用的记录")]
+    pub only_missing_cost: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetChargeDetailParams {
+    /// 充电记录 ID
+    #[schemars(description = "充电记录 ID")]
+    pub charge_id: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SetChargeCostParams {
+    /// 充电记录 ID
+    #[schemars(description = "充电记录 ID")]
+    pub charge_id: i32,
+    /// 费用金额
+    #[schemars(description = "费用金额")]
+    pub cost: serde_json::Value,
+    /// 货币类型（仅用于返回说明，不存储）
+    #[schemars(description = "货币类型（仅用于返回说明，不存储）")]
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SearchChargesByDateParams {
+    /// 开始日期，格式 YYYY-MM-DD
+    #[schemars(description = "开始日期，格式 YYYY-MM-DD")]
+    pub start_date: String,
+    /// 结束日期，格式 YYYY-MM-DD
+    #[schemars(description = "结束日期，格式 YYYY-MM-DD")]
+    pub end_date: String,
+    /// 返回记录数量，默认50，最大100
+    #[schemars(description = "返回记录数量，默认50，最大100")]
+    pub limit: Option<i32>,
+    /// 是否只返回未填写费用的记录
+    #[schemars(description = "是否只返回未填写费用的记录")]
+    pub only_missing_cost: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetCostSummaryParams {
+    /// 开始日期，格式 YYYY-MM-DD
+    #[schemars(description = "开始日期，格式 YYYY-MM-DD")]
+    pub start_date: String,
+    /// 结束日期，格式 YYYY-MM-DD
+    #[schemars(description = "结束日期，格式 YYYY-MM-DD")]
+    pub end_date: String,
+}
+
+// ─── Server ───
+
 #[derive(Debug, Clone)]
 pub struct TeslaMateServer {
     db: Arc<Database>,
+    #[allow(dead_code)]
+    tool_router: ToolRouter<Self>,
 }
 
 impl TeslaMateServer {
     pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+        Self {
+            db,
+            tool_router: Self::tool_router(),
+        }
     }
 }
 
-#[tool(tool_box)]
+#[tool_router]
 impl TeslaMateServer {
     #[tool(
         name = "list_recent_charges",
@@ -35,14 +106,10 @@ impl TeslaMateServer {
     )]
     async fn list_recent_charges(
         &self,
-        #[tool(param)]
-        #[schemars(description = "返回记录数量，默认10，最大100")]
-        limit: Option<i32>,
-        #[tool(param)]
-        #[schemars(description = "是否只返回未填写费用的记录")]
-        only_missing_cost: Option<bool>,
+        Parameters(params): Parameters<ListRecentChargesParams>,
     ) -> String {
-        let only_missing_cost = only_missing_cost.unwrap_or(false);
+        let limit = params.limit;
+        let only_missing_cost = params.only_missing_cost.unwrap_or(false);
         match self.db.list_recent_charges(limit, only_missing_cost).await {
             Ok(charges) => {
                 let response = ListChargesResponse {
@@ -52,9 +119,8 @@ impl TeslaMateServer {
                     timezone: self.db.local_timezone.to_string(),
                     charges,
                 };
-                serde_json::to_string(&response).unwrap_or_else(|e| {
-                    json!({"error": e.to_string()}).to_string()
-                })
+                serde_json::to_string(&response)
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}).to_string())
             }
             Err(e) => json!({"error": e.to_string()}).to_string(),
         }
@@ -66,10 +132,9 @@ impl TeslaMateServer {
     )]
     async fn get_charge_detail(
         &self,
-        #[tool(param)]
-        #[schemars(description = "充电记录 ID")]
-        charge_id: i32,
+        Parameters(params): Parameters<GetChargeDetailParams>,
     ) -> String {
+        let charge_id = params.charge_id;
         match self.db.get_charge_detail(charge_id).await {
             Ok(Some(charge)) => {
                 let response = ChargeDetailResponse {
@@ -78,9 +143,8 @@ impl TeslaMateServer {
                     timezone: Some(self.db.local_timezone.to_string()),
                     charge: Some(charge),
                 };
-                serde_json::to_string(&response).unwrap_or_else(|e| {
-                    json!({"error": e.to_string()}).to_string()
-                })
+                serde_json::to_string(&response)
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}).to_string())
             }
             Ok(None) => {
                 let response = ChargeDetailResponse {
@@ -89,9 +153,8 @@ impl TeslaMateServer {
                     timezone: None,
                     charge: None,
                 };
-                serde_json::to_string(&response).unwrap_or_else(|e| {
-                    json!({"error": e.to_string()}).to_string()
-                })
+                serde_json::to_string(&response)
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}).to_string())
             }
             Err(e) => json!({"error": e.to_string()}).to_string(),
         }
@@ -103,17 +166,11 @@ impl TeslaMateServer {
     )]
     async fn set_charge_cost(
         &self,
-        #[tool(param)]
-        #[schemars(description = "充电记录 ID")]
-        charge_id: i32,
-        #[tool(param)]
-        #[schemars(description = "费用金额")]
-        cost: serde_json::Value,
-        #[tool(param)]
-        #[schemars(description = "货币类型（仅用于返回说明，不存储）")]
-        currency: Option<String>,
+        Parameters(params): Parameters<SetChargeCostParams>,
     ) -> String {
-        let normalized_cost = match self.db.normalize_cost(cost) {
+        let charge_id = params.charge_id;
+        let currency = params.currency;
+        let normalized_cost = match self.db.normalize_cost(params.cost) {
             Ok(c) => c,
             Err(e) => return json!({"error": e.to_string()}).to_string(),
         };
@@ -130,18 +187,15 @@ impl TeslaMateServer {
                     currency_note: "TeslaMate only stores charging_processes.cost; currency is returned as text and is not persisted.".to_string(),
                     charge: Some(charge),
                 };
-                serde_json::to_string(&response).unwrap_or_else(|e| {
-                    json!({"error": e.to_string()}).to_string()
-                })
+                serde_json::to_string(&response)
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}).to_string())
             }
-            Ok(None) => {
-                json!({
-                    "updated": false,
-                    "charge_id": charge_id,
-                    "reason": "not_found"
-                })
-                .to_string()
-            }
+            Ok(None) => json!({
+                "updated": false,
+                "charge_id": charge_id,
+                "reason": "not_found"
+            })
+            .to_string(),
             Err(e) => json!({"error": e.to_string()}).to_string(),
         }
     }
@@ -152,23 +206,13 @@ impl TeslaMateServer {
     )]
     async fn search_charges_by_date(
         &self,
-        #[tool(param)]
-        #[schemars(description = "开始日期，格式 YYYY-MM-DD")]
-        start_date: String,
-        #[tool(param)]
-        #[schemars(description = "结束日期，格式 YYYY-MM-DD")]
-        end_date: String,
-        #[tool(param)]
-        #[schemars(description = "返回记录数量，默认50，最大100")]
-        limit: Option<i32>,
-        #[tool(param)]
-        #[schemars(description = "是否只返回未填写费用的记录")]
-        only_missing_cost: Option<bool>,
+        Parameters(params): Parameters<SearchChargesByDateParams>,
     ) -> String {
-        let only_missing_cost = only_missing_cost.unwrap_or(false);
+        let limit = params.limit;
+        let only_missing_cost = params.only_missing_cost.unwrap_or(false);
         match self
             .db
-            .search_charges_by_date(&start_date, &end_date, limit, only_missing_cost)
+            .search_charges_by_date(&params.start_date, &params.end_date, limit, only_missing_cost)
             .await
         {
             Ok((start_boundary, end_boundary, charges)) => {
@@ -177,15 +221,14 @@ impl TeslaMateServer {
                     limit: self.db.normalize_limit(limit, 50),
                     only_missing_cost,
                     timezone: self.db.local_timezone.to_string(),
-                    start_date,
-                    end_date,
+                    start_date: params.start_date,
+                    end_date: params.end_date,
                     start_boundary_utc: utc_to_z(&start_boundary),
                     end_boundary_utc_exclusive: utc_to_z(&end_boundary),
                     charges,
                 };
-                serde_json::to_string(&response).unwrap_or_else(|e| {
-                    json!({"error": e.to_string()}).to_string()
-                })
+                serde_json::to_string(&response)
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}).to_string())
             }
             Err(e) => json!({"error": e.to_string()}).to_string(),
         }
@@ -197,14 +240,13 @@ impl TeslaMateServer {
     )]
     async fn get_cost_summary(
         &self,
-        #[tool(param)]
-        #[schemars(description = "开始日期，格式 YYYY-MM-DD")]
-        start_date: String,
-        #[tool(param)]
-        #[schemars(description = "结束日期，格式 YYYY-MM-DD")]
-        end_date: String,
+        Parameters(params): Parameters<GetCostSummaryParams>,
     ) -> String {
-        match self.db.get_cost_summary(&start_date, &end_date).await {
+        match self
+            .db
+            .get_cost_summary(&params.start_date, &params.end_date)
+            .await
+        {
             Ok((
                 start_boundary,
                 end_boundary,
@@ -222,8 +264,8 @@ impl TeslaMateServer {
 
                 let response = CostSummaryResponse {
                     timezone: self.db.local_timezone.to_string(),
-                    start_date,
-                    end_date,
+                    start_date: params.start_date,
+                    end_date: params.end_date,
                     start_boundary_utc: utc_to_z(&start_boundary),
                     end_boundary_utc_exclusive: utc_to_z(&end_boundary),
                     total_sessions,
@@ -233,34 +275,24 @@ impl TeslaMateServer {
                     total_energy_kwh: total_energy.round_dp(1).to_string(),
                     avg_cost_per_kwh: avg_cost_per_kwh.to_string(),
                 };
-                serde_json::to_string(&response).unwrap_or_else(|e| {
-                    json!({"error": e.to_string()}).to_string()
-                })
+                serde_json::to_string(&response)
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}).to_string())
             }
             Err(e) => json!({"error": e.to_string()}).to_string(),
         }
     }
 }
 
-#[tool(tool_box)]
-impl ServerHandler for TeslaMateServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "TeslaMate 充电费用助手。可以查询 TeslaMate 充电记录，查看充电详情，\
-                 筛选未填写费用的记录，并手动更新公共充电站实际费用。\
-                 费用写入 charging_processes.cost。\
-                 TeslaMate 本身不存储货币类型，currency 只作为返回说明。"
-                    .into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
-    }
-}
+#[tool_handler(
+    name = "teslamate-charging-cost-mcp",
+    version = "0.1.0",
+    instructions = "TeslaMate 充电费用助手。可以查询 TeslaMate 充电记录，查看充电详情，筛选未填写费用的记录，并手动更新公共充电站实际费用。费用写入 charging_processes.cost。TeslaMate 本身不存储货币类型，currency 只作为返回说明。"
+)]
+impl ServerHandler for TeslaMateServer {}
+
+// ─── Transport: stdio ───
 
 pub async fn serve_stdio(db: Arc<Database>) -> Result<(), anyhow::Error> {
-    use rmcp::ServiceExt;
     let server = TeslaMateServer::new(db);
     let transport = rmcp::transport::stdio();
     let service = server.serve(transport).await?;
@@ -268,11 +300,22 @@ pub async fn serve_stdio(db: Arc<Database>) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-pub async fn serve_sse(db: Arc<Database>, host: &str, port: u16) -> Result<(), anyhow::Error> {
+// ─── Transport: streamable-http ───
+
+pub async fn serve_http(db: Arc<Database>, host: &str, port: u16) -> Result<(), anyhow::Error> {
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
-    tracing::info!("SSE transport listening on {addr}");
-    let sse_server = rmcp::transport::SseServer::serve(addr).await?;
-    let ct = sse_server.with_service(move || TeslaMateServer::new(db.clone()));
-    ct.cancelled().await;
+
+    let service = StreamableHttpService::new(
+        move || Ok(TeslaMateServer::new(db.clone())),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+
+    tracing::info!("Streamable HTTP transport listening on {addr}");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, router).await?;
+
     Ok(())
 }

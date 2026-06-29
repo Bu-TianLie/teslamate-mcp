@@ -15,8 +15,8 @@ pub enum AppError {
     NotFound(String),
 }
 
-impl From<AppError> for rmcp::Error {
+impl From<AppError> for rmcp::ErrorData {
     fn from(err: AppError) -> Self {
-        rmcp::Error::internal_error(err.to_string(), None)
+        rmcp::ErrorData::internal_error(err.to_string(), None)
     }
 }
