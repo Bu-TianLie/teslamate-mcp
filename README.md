@@ -2,19 +2,15 @@
 
 一个 MCP 服务，用来查询 TeslaMate 最近充电记录，并直接写入 `charging_processes.cost`。
 
-默认使用 `streamable-http`，适合小米手机 MiClaw 这类通过网络 URL 调用 MCP Server 的客户端：
+使用 Rust 实现，基于 [rmcp](https://crates.io/crates/rmcp) SDK。
 
-```text
-http://<TeslaMate 所在机器的局域网 IP>:8000/mcp
-```
-
-也可以通过 `MCP_TRANSPORT=stdio` 切回 Claude Desktop / Claude Code 常见的 stdio 模式。
-
-如果 MiClaw 只支持旧的 SSE transport，可以设置 `MCP_TRANSPORT=sse`，默认地址会是：
+默认使用 `sse`，适合小米手机 MiClaw 这类通过网络 URL 调用 MCP Server 的客户端：
 
 ```text
 http://<TeslaMate 所在机器的局域网 IP>:8000/sse
 ```
+
+也可以通过 `MCP_TRANSPORT=stdio` 切回 Claude Desktop / Claude Code 常见的 stdio 模式。
 
 ## Tools
 
@@ -22,6 +18,7 @@ http://<TeslaMate 所在机器的局域网 IP>:8000/sse
 - `get_charge_detail(charge_id)`：查看单次充电详情。
 - `set_charge_cost(charge_id, cost, currency=None)`：写入充电费用。TeslaMate 只保存金额，`currency` 仅用于返回确认信息。
 - `search_charges_by_date(start_date, end_date, limit=50)`：按日期范围查询。`end_date` 如果是 `YYYY-MM-DD`，会包含该日整天。
+- `get_cost_summary(start_date, end_date)`：统计指定时间段内的充电费用汇总。
 
 ## Docker 部署
 
@@ -44,7 +41,7 @@ docker network ls | grep teslamate
 ```dotenv
 DATABASE_URL=postgresql://teslamate:你的数据库密码@database:5432/teslamate
 TESLAMATE_DOCKER_NETWORK=teslamate_default
-MCP_TRANSPORT=streamable-http
+MCP_TRANSPORT=sse
 MCP_HOST=0.0.0.0
 MCP_PORT=8000
 LOCAL_TIMEZONE=Asia/Shanghai
@@ -58,15 +55,6 @@ LOCAL_TIMEZONE=Asia/Shanghai
 docker compose up -d --build
 ```
 
-Dockerfile 默认使用 Docker Hub 官方 `python:3.11-slim-bookworm`，并通过阿里云 PyPI 镜像安装 `uv`，避免拉取较慢的 `ghcr.io/astral-sh/uv`。如果你想换 PyPI 镜像，可以在构建时传参：
-
-```bash
-docker compose build --build-arg PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple/
-docker compose up -d
-```
-
-如果 Docker Hub 官方 Python 镜像也慢，建议在服务器 Docker daemon 配置阿里云 ACR 镜像加速器，或把 `python:3.11-slim-bookworm` 同步到你自己的阿里云 ACR 私有仓库后再改 `FROM`。
-
 5. 查看日志：
 
 ```bash
@@ -76,13 +64,13 @@ docker compose logs -f teslamate-mcp
 然后在小米 MiClaw 里配置 MCP Server URL：
 
 ```text
-http://<TeslaMate 所在机器的局域网 IP>:8000/mcp
+http://<TeslaMate 所在机器的局域网 IP>:8000/sse
 ```
 
 例如 TeslaMate 主机局域网 IP 是 `192.168.31.20`：
 
 ```text
-http://192.168.31.20:8000/mcp
+http://192.168.31.20:8000/sse
 ```
 
 手机和 TeslaMate 主机需要在同一个局域网，或者手机需要能通过 VPN / 内网穿透访问这个地址。
@@ -97,21 +85,13 @@ http://192.168.31.20:8000/mcp
 
 ```bash
 cp .env.example .env
-uv python install 3.11
-uv sync --no-dev
-uv run python src/server.py
+cargo run
 ```
 
-默认会启动 HTTP MCP。stdio 模式可以这样运行：
+默认会启动 SSE MCP。stdio 模式可以这样运行：
 
 ```bash
-MCP_TRANSPORT=stdio uv run python src/server.py
-```
-
-SSE 模式可以这样运行：
-
-```bash
-MCP_TRANSPORT=sse uv run python src/server.py
+MCP_TRANSPORT=stdio cargo run
 ```
 
 ## Claude Desktop stdio 配置示例
@@ -137,4 +117,20 @@ MCP_TRANSPORT=sse uv run python src/server.py
 }
 ```
 
-如果你已经把服务作为长期容器运行，也可以改成 `docker exec -i <container> python src/server.py` 一类的命令。
+如果你已经把服务作为长期容器运行，也可以改成 `docker exec -i <container> teslamate-mcp` 一类的命令。
+
+## 构建
+
+```bash
+# 开发构建
+cargo build
+
+# 发布构建
+cargo build --release
+
+# 运行测试
+cargo test
+
+# 代码检查
+cargo clippy
+```

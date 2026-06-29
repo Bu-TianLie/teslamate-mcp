@@ -12,21 +12,12 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: ${MCP_PORT:-8000}
       LOCAL_TIMEZONE: ${LOCAL_TIMEZONE:-Asia/Shanghai}
-      DATABASE_POOL_MIN_SIZE: ${DATABASE_POOL_MIN_SIZE:-1}
-      DATABASE_POOL_MAX_SIZE: ${DATABASE_POOL_MAX_SIZE:-4}
-      DATABASE_COMMAND_TIMEOUT: ${DATABASE_COMMAND_TIMEOUT:-10}
     ports:
       - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
     networks:
       - teslamate
     healthcheck:
-      test:
-        [
-          "CMD",
-          "/opt/venv/bin/python",
-          "-c",
-          "import os, socket; s = socket.create_connection(('127.0.0.1', int(os.getenv('MCP_PORT', '8000'))), 3); s.close()",
-        ]
+      test: ["CMD", "teslamate-mcp", "--healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

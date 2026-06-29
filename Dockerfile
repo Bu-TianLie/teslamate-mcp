@@ -1,25 +1,27 @@
-FROM python:3.11-slim-bookworm
-
-ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ARG UV_VERSION=0.11.7
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_INDEX_URL=${PYPI_INDEX_URL} \
-    UV_COMPILE_BYTECODE=1 \
-    UV_INDEX_URL=${PYPI_INDEX_URL} \
-    UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=0 \
-    UV_PROJECT_ENVIRONMENT=/opt/venv
+# Builder stage
+FROM rust:1.82-bookworm AS builder
 
 WORKDIR /app
 
-RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}"
+# Cache dependencies
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
-COPY .python-version pyproject.toml uv.lock uv.toml README.md ./
+# Build application
 COPY src ./src
-RUN uv sync --no-dev --frozen
+RUN touch src/main.rs && cargo build --release
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/target/release/teslamate-mcp /usr/local/bin/teslamate-mcp
 
 EXPOSE 8000
 
-CMD ["/opt/venv/bin/python", "src/server.py"]
+CMD ["teslamate-mcp"]

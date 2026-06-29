@@ -1,8 +1,5 @@
 .env
-.venv
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+/target/
+.git/
+.gitignore
+README.md
