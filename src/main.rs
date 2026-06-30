@@ -21,6 +21,8 @@ async fn main() -> Result<()> {
     let database_url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
 
+    tracing::info!("Database connected: {}", database_url);
+
     let tz_name = std::env::var("LOCAL_TIMEZONE")
         .or_else(|_| std::env::var("TZ"))
         .unwrap_or_else(|_| "Asia/Shanghai".to_string());
@@ -45,7 +47,10 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "8000".to_string())
                 .parse()
                 .map_err(|_| anyhow::anyhow!("MCP_PORT must be a valid port number"))?;
+            
+            tracing::info!("TeslaMate MCP server listening on http://{}:{}", host, port);
             tools::serve_http(db, &host, port).await?
+            
         }
         _ => {
             anyhow::bail!("MCP_TRANSPORT must be one of: stdio, streamable-http");

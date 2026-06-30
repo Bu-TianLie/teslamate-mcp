@@ -2,13 +2,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use rmcp::{
-    ServerHandler, ServiceExt,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    schemars,
-    tool, tool_handler, tool_router,
-    transport::streamable_http_server::{
+    ServerHandler, ServiceExt, handler::server::{router::tool::ToolRouter, wrapper::Parameters}, schemars, tool, tool_handler, tool_router, transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-    },
+    }
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

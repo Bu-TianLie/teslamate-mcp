@@ -9,7 +9,7 @@ pub struct FormattedDatetime {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChargeRecord {
     pub id: i32,
-    pub car_id: i32,
+    pub car_id: i16,
     pub car_name: Option<String>,
     pub start_date: FormattedDatetime,
     pub end_date: FormattedDatetime,
