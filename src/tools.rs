@@ -301,9 +301,23 @@ pub async fn serve_stdio(db: Arc<Database>) -> Result<(), anyhow::Error> {
 pub async fn serve_http(db: Arc<Database>, host: &str, port: u16) -> Result<(), anyhow::Error> {
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
 
+    // 从环境变量读取允许的 Host，逗号分隔。默认允许 localhost。
+    // 设置 MCP_ALLOWED_HOSTS=* 可禁用检查（公网部署）。
+    let allowed_hosts: Vec<String> = std::env::var("MCP_ALLOWED_HOSTS")
+        .ok()
+        .map(|v| {
+            if v.trim() == "*" {
+                vec![] // 空列表 = 允许所有
+            } else {
+                v.split(',').map(|s| s.trim().to_string()).collect()
+            }
+        })
+        .unwrap_or_else(|| vec!["localhost".into(), "127.0.0.1".into(), "::1".into()]);
+
     let config = StreamableHttpServerConfig::default()
         .with_stateful_mode(false)
-        .with_json_response(true);
+        .with_json_response(true)
+        .with_allowed_hosts(allowed_hosts);
 
     let service = StreamableHttpService::new(
         move || Ok(TeslaMateServer::new(db.clone())),
