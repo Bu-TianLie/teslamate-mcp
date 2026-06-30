@@ -10,6 +10,32 @@ use crate::models::{ChargeRecord, FormattedDatetime};
 const MAX_LIMIT: i32 = 100;
 pub const DEFAULT_LIMIT: i32 = 10;
 
+const BASE_CHARGE_SELECT: &str = r#"
+    SELECT
+        cp.id,
+        cp.car_id,
+        c.name AS car_name,
+        cp.start_date,
+        cp.end_date,
+        cp.duration_min,
+        cp.start_battery_level,
+        cp.end_battery_level,
+        cp.start_ideal_range_km,
+        cp.end_ideal_range_km,
+        cp.charge_energy_added,
+        cp.charge_energy_used,
+        cp.cost,
+        cp.geofence_id,
+        geo.name AS geofence_name,
+        cp.address_id,
+        addr.display_name AS address,
+        cp.position_id
+    FROM charging_processes AS cp
+    LEFT JOIN cars AS c ON c.id = cp.car_id
+    LEFT JOIN geofences AS geo ON geo.id = cp.geofence_id
+    LEFT JOIN addresses AS addr ON addr.id = cp.address_id
+"#;
+
 #[derive(Debug)]
 pub struct Database {
     pub pool: PgPool,
@@ -124,11 +150,13 @@ impl Database {
         Ok(dt.with_timezone(&Utc))
     }
 
-    fn format_datetime(&self, value: Option<DateTime<Utc>>) -> FormattedDatetime {
+    fn format_datetime(&self, value: Option<NaiveDateTime>) -> FormattedDatetime {
         match value {
-            Some(dt) => {
-                let utc = dt.to_rfc3339().replace("+00:00", "Z");
-                let local = dt.with_timezone(&self.local_timezone).to_rfc3339();
+            Some(ndt) => {
+                // TeslaMate stores UTC timestamps as naive TIMESTAMP
+                let utc_dt = Utc.from_utc_datetime(&ndt);
+                let utc = utc_dt.to_rfc3339().replace("+00:00", "Z");
+                let local = utc_dt.with_timezone(&self.local_timezone).to_rfc3339();
                 FormattedDatetime {
                     utc: Some(utc),
                     local: Some(local),
@@ -200,24 +228,7 @@ impl Database {
         };
 
         let query = format!(
-            r#"
-            SELECT
-                cp.id, cp.car_id, c.name AS car_name,
-                cp.start_date, cp.end_date, cp.duration_min,
-                cp.start_battery_level, cp.end_battery_level,
-                cp.start_ideal_range_km, cp.end_ideal_range_km,
-                cp.charge_energy_added, cp.charge_energy_used,
-                cp.cost, cp.geofence_id, geo.name AS geofence_name,
-                cp.address_id, addr.display_name AS address,
-                cp.position_id
-            FROM charging_processes AS cp
-            LEFT JOIN cars AS c ON c.id = cp.car_id
-            LEFT JOIN geofences AS geo ON geo.id = cp.geofence_id
-            LEFT JOIN addresses AS addr ON addr.id = cp.address_id
-            {cost_filter}
-            ORDER BY cp.start_date DESC NULLS LAST, cp.id DESC
-            LIMIT $1
-            "#
+            "{BASE_CHARGE_SELECT} {cost_filter} ORDER BY cp.start_date DESC NULLS LAST, cp.id DESC LIMIT $1"
         );
 
         let rows = sqlx::query(&query)
@@ -232,24 +243,9 @@ impl Database {
         &self,
         charge_id: i32,
     ) -> Result<Option<ChargeRecord>, AppError> {
-        let query = r#"
-            SELECT
-                cp.id, cp.car_id, c.name AS car_name,
-                cp.start_date, cp.end_date, cp.duration_min,
-                cp.start_battery_level, cp.end_battery_level,
-                cp.start_ideal_range_km, cp.end_ideal_range_km,
-                cp.charge_energy_added, cp.charge_energy_used,
-                cp.cost, cp.geofence_id, geo.name AS geofence_name,
-                cp.address_id, addr.display_name AS address,
-                cp.position_id
-            FROM charging_processes AS cp
-            LEFT JOIN cars AS c ON c.id = cp.car_id
-            LEFT JOIN geofences AS geo ON geo.id = cp.geofence_id
-            LEFT JOIN addresses AS addr ON addr.id = cp.address_id
-            WHERE cp.id = $1
-        "#;
+        let query = format!("{BASE_CHARGE_SELECT} WHERE cp.id = $1");
 
-        let row = sqlx::query(query)
+        let row = sqlx::query(&query)
             .bind(charge_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -264,25 +260,9 @@ impl Database {
     ) -> Result<Option<(Option<Decimal>, ChargeRecord)>, AppError> {
         let mut tx = self.pool.begin().await?;
 
-        // Check if exists and get current cost
-        let query = r#"
-            SELECT
-                cp.id, cp.car_id, c.name AS car_name,
-                cp.start_date, cp.end_date, cp.duration_min,
-                cp.start_battery_level, cp.end_battery_level,
-                cp.start_ideal_range_km, cp.end_ideal_range_km,
-                cp.charge_energy_added, cp.charge_energy_used,
-                cp.cost, cp.geofence_id, geo.name AS geofence_name,
-                cp.address_id, addr.display_name AS address,
-                cp.position_id
-            FROM charging_processes AS cp
-            LEFT JOIN cars AS c ON c.id = cp.car_id
-            LEFT JOIN geofences AS geo ON geo.id = cp.geofence_id
-            LEFT JOIN addresses AS addr ON addr.id = cp.address_id
-            WHERE cp.id = $1
-        "#;
+        let query = format!("{BASE_CHARGE_SELECT} WHERE cp.id = $1");
 
-        let row = sqlx::query(query)
+        let row = sqlx::query(&query)
             .bind(charge_id)
             .fetch_optional(&mut *tx)
             .await?;
@@ -305,7 +285,7 @@ impl Database {
             .await?;
 
         // Fetch updated record
-        let updated_row = sqlx::query(query)
+        let updated_row = sqlx::query(&query)
             .bind(charge_id)
             .fetch_one(&mut *tx)
             .await?;
@@ -337,26 +317,7 @@ impl Database {
         };
 
         let query = format!(
-            r#"
-            SELECT
-                cp.id, cp.car_id, c.name AS car_name,
-                cp.start_date, cp.end_date, cp.duration_min,
-                cp.start_battery_level, cp.end_battery_level,
-                cp.start_ideal_range_km, cp.end_ideal_range_km,
-                cp.charge_energy_added, cp.charge_energy_used,
-                cp.cost, cp.geofence_id, geo.name AS geofence_name,
-                cp.address_id, addr.display_name AS address,
-                cp.position_id
-            FROM charging_processes AS cp
-            LEFT JOIN cars AS c ON c.id = cp.car_id
-            LEFT JOIN geofences AS geo ON geo.id = cp.geofence_id
-            LEFT JOIN addresses AS addr ON addr.id = cp.address_id
-            WHERE cp.start_date >= $1
-              AND cp.start_date < $2
-              {cost_filter}
-            ORDER BY cp.start_date DESC NULLS LAST, cp.id DESC
-            LIMIT $3
-            "#
+            "{BASE_CHARGE_SELECT} WHERE cp.start_date >= $1 AND cp.start_date < $2 {cost_filter} ORDER BY cp.start_date DESC NULLS LAST, cp.id DESC LIMIT $3"
         );
 
         let rows = sqlx::query(&query)
@@ -397,7 +358,7 @@ impl Database {
               AND start_date < $2
         "#;
 
-        let row = sqlx::query(query)
+        let row = sqlx::query(&query)
             .bind(start_boundary)
             .bind(end_boundary)
             .fetch_one(&self.pool)
